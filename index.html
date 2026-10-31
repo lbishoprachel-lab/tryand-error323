@@ -1,0 +1,689 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Kotak Misteri Nombor</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@400;600;800&display=swap" rel="stylesheet">
+    
+    <!-- MediaPipe Hands & Camera Utils -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+    <style>
+        body {
+            font-family: 'Baloo 2', cursive;
+            overflow: hidden;
+            background-color: #1e1b4b; /* Dark fallback */
+            touch-action: none;
+        }
+
+        /* Video / Camera Background */
+        #webcam-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: -1;
+            overflow: hidden;
+            background: #000;
+        }
+
+        .input_video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1); /* Mirror image */
+            opacity: 0.6; /* Dim video slightly so UI pops */
+        }
+
+        /* Virtual Cursor */
+        #cursor {
+            position: absolute;
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+            z-index: 50;
+            display: none;
+            box-shadow: 0 0 15px rgba(255, 255, 255, 0.8);
+            transition: transform 0.1s ease-out;
+        }
+        
+        #cursor-ring {
+            width: 100%;
+            height: 100%;
+            border-radius: 50%;
+            background: conic-gradient(#4ade80 0%, transparent 0);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        #cursor-inner {
+            width: 46px;
+            height: 46px;
+            background-color: white;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+        }
+
+        /* Mystery Boxes */
+        .mystery-box {
+            position: absolute;
+            width: 140px;
+            height: 140px;
+            border-radius: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            font-size: 2rem;
+            font-weight: bold;
+            color: white;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+            transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            border: 4px solid white;
+            text-align: center;
+            padding: 10px;
+            line-height: 1.2;
+        }
+
+        @media (max-width: 640px) {
+            .mystery-box {
+                width: 100px;
+                height: 100px;
+                font-size: 1.2rem;
+                border-radius: 12px;
+            }
+        }
+
+        .box-tl { top: 5%; left: 5%; background: linear-gradient(135deg, #f87171, #ef4444); }
+        .box-tr { top: 5%; right: 5%; background: linear-gradient(135deg, #60a5fa, #3b82f6); }
+        .box-bl { bottom: 5%; left: 5%; background: linear-gradient(135deg, #facc15, #eab308); }
+        .box-br { bottom: 5%; right: 5%; background: linear-gradient(135deg, #a78bfa, #8b5cf6); }
+
+        .mystery-box .answer-text {
+            display: block;
+            font-size: 2.2rem;
+            font-weight: 800;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+            transition: transform 0.3s ease;
+        }
+        
+        @media (max-width: 640px) {
+            .mystery-box .answer-text { font-size: 1.5rem; }
+        }
+
+        /* Animations */
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            20%, 60% { transform: translateX(-10px) rotate(-5deg); }
+            40%, 80% { transform: translateX(10px) rotate(5deg); }
+        }
+        .shake { animation: shake 0.5s ease-in-out; }
+
+        @keyframes popOpen {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.3); }
+            100% { transform: scale(1); }
+        }
+        .opened {
+            animation: popOpen 0.6s ease-out forwards;
+            background: linear-gradient(135deg, #34d399, #10b981) !important;
+        }
+        .opened .answer-text { transform: scale(1.4); }
+        
+        .wrong-opened {
+            background: linear-gradient(135deg, #9ca3af, #6b7280) !important;
+            opacity: 0.8;
+        }
+        .wrong-opened .answer-text { color: #fca5a5; text-decoration: line-through; }
+
+        /* UI Overlays */
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.9);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            border: 2px solid rgba(255,255,255,0.5);
+        }
+        
+        #hud {
+            pointer-events: none;
+        }
+
+        .loading-dots:after {
+            content: '.';
+            animation: dots 1.5s steps(5, end) infinite;
+        }
+        @keyframes dots {
+            0%, 20% { color: rgba(0,0,0,0); text-shadow: .25em 0 0 rgba(0,0,0,0), .5em 0 0 rgba(0,0,0,0); }
+            40% { color: white; text-shadow: .25em 0 0 rgba(0,0,0,0), .5em 0 0 rgba(0,0,0,0); }
+            60% { text-shadow: .25em 0 0 white, .5em 0 0 rgba(0,0,0,0); }
+            80%, 100% { text-shadow: .25em 0 0 white, .5em 0 0 white; }
+        }
+    </style>
+</head>
+<body class="text-gray-800">
+
+    <!-- Camera Background -->
+    <div id="webcam-container">
+        <video class="input_video" autoplay playsinline></video>
+    </div>
+
+    <!-- Virtual Cursor -->
+    <div id="cursor">
+        <div id="cursor-ring">
+            <div id="cursor-inner">👆</div>
+        </div>
+    </div>
+
+    <!-- MAIN MENU SCREEN -->
+    <div id="screen-start" class="fixed inset-0 flex flex-col items-center justify-center z-40 bg-black/60 backdrop-blur-sm p-4">
+        <div class="glass-panel p-8 max-w-lg w-full text-center">
+            <div class="text-6xl mb-4">🎁🔢</div>
+            <h1 class="text-4xl md:text-5xl font-extrabold text-indigo-700 mb-2 leading-tight">Kotak Misteri<br>Nombor</h1>
+            <p class="text-lg text-gray-600 mb-6 font-semibold">
+                Uji minda anda! Guna <span class="text-indigo-600">Jari Telunjuk</span> anda di hadapan kamera untuk memilih jawapan yang betul. Tahan jari pada kotak selama 1 saat untuk membukanya.
+            </p>
+            
+            <div id="camera-status" class="mb-4 text-sm font-bold text-amber-500 bg-amber-50 rounded-lg p-2 hidden">
+                Menghidupkan kamera<span class="loading-dots"></span>
+            </div>
+
+            <button id="btn-start" class="w-full bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white font-bold py-4 px-8 rounded-xl shadow-lg transform transition hover:scale-105 text-2xl">
+                MULA MAIN
+            </button>
+            <p class="mt-4 text-xs text-gray-400">*Sila benarkan akses kamera untuk bermain.</p>
+        </div>
+    </div>
+
+    <!-- GAME SCREEN -->
+    <div id="screen-game" class="fixed inset-0 z-10 hidden">
+        
+        <!-- HUD -->
+        <div id="hud" class="w-full pt-6 px-4 flex flex-col items-center">
+            <div class="glass-panel px-6 py-3 flex justify-between w-full max-w-3xl mb-4 items-center">
+                <div class="text-xl font-bold text-indigo-800">
+                    Skor: <span id="score-display" class="text-3xl text-indigo-600">0</span>
+                </div>
+                <div class="text-xl font-bold text-pink-600">
+                    Masa: <span id="timer-display" class="text-3xl">15</span>s
+                </div>
+                <div class="text-xl font-bold text-teal-700">
+                    Soalan: <span id="question-count">1</span>/10
+                </div>
+            </div>
+
+            <div class="glass-panel px-8 py-4 text-center max-w-4xl border-b-4 border-indigo-400">
+                <h2 id="question-text" class="text-3xl md:text-4xl font-extrabold text-gray-800">
+                    Apakah nilai tempat bagi X dalam Y?
+                </h2>
+            </div>
+        </div>
+
+        <!-- Mystery Boxes -->
+        <div id="box-0" class="mystery-box box-tl" data-index="0">
+            <div class="answer-text">A</div>
+        </div>
+        <div id="box-1" class="mystery-box box-tr" data-index="1">
+            <div class="answer-text">B</div>
+        </div>
+        <div id="box-2" class="mystery-box box-bl" data-index="2">
+            <div class="answer-text">C</div>
+        </div>
+        <div id="box-3" class="mystery-box box-br" data-index="3">
+            <div class="answer-text">D</div>
+        </div>
+    </div>
+
+    <!-- END SCREEN -->
+    <div id="screen-end" class="fixed inset-0 flex flex-col items-center justify-center z-40 bg-black/80 backdrop-blur-md hidden p-4">
+        <div class="glass-panel p-8 max-w-lg w-full text-center border-4 border-yellow-400">
+            <div class="text-6xl mb-4">🏆</div>
+            <h1 class="text-4xl font-extrabold text-indigo-800 mb-2">Permainan Tamat!</h1>
+            <p class="text-xl text-gray-600 mb-6 font-semibold">Markah Hebat Anda:</p>
+            
+            <div class="text-7xl font-black text-transparent bg-clip-text bg-gradient-to-br from-yellow-400 to-orange-600 mb-8 drop-shadow-md">
+                <span id="final-score">0</span>
+            </div>
+
+            <button id="btn-restart" class="w-full bg-gradient-to-r from-green-400 to-teal-500 hover:from-green-500 hover:to-teal-600 text-white font-bold py-4 px-8 rounded-xl shadow-lg transform transition hover:scale-105 text-2xl">
+                MAIN SEMULA
+            </button>
+        </div>
+    </div>
+
+    <script>
+        /** AUDIO SYSTEM (Web Audio API) **/
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        let audioCtx;
+
+        function initAudio() {
+            if (!audioCtx) {
+                audioCtx = new AudioContext();
+            }
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+        }
+
+        function playTone(freq, type, duration, vol = 0.1) {
+            if (!audioCtx) return;
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.type = type;
+            osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+            
+            gain.gain.setValueAtTime(vol, audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+            
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            
+            osc.start();
+            osc.stop(audioCtx.currentTime + duration);
+        }
+
+        function playSuccessSound() {
+            initAudio();
+            playTone(440, 'sine', 0.15, 0.2); // A4
+            setTimeout(() => playTone(554, 'sine', 0.15, 0.2), 100); // C#5
+            setTimeout(() => playTone(659, 'sine', 0.3, 0.2), 200); // E5
+        }
+
+        function playErrorSound() {
+            initAudio();
+            playTone(200, 'sawtooth', 0.3, 0.2);
+            setTimeout(() => playTone(150, 'sawtooth', 0.4, 0.2), 150);
+        }
+
+        function playHoverSound() {
+            initAudio();
+            playTone(800, 'sine', 0.05, 0.05);
+        }
+        
+        function playOpenSound() {
+            initAudio();
+            playTone(1200, 'square', 0.1, 0.1);
+        }
+
+        /** GAME LOGIC & STATE **/
+        let gameState = 'start'; // start, playing, ended, transitioning
+        let score = 0;
+        let currentQuestionIndex = 0;
+        const totalQuestions = 10;
+        const timePerQuestion = 15;
+        let timeRemaining = timePerQuestion;
+        let timerInterval;
+        let currentAnswer = "";
+        
+        // Dwell Logic variables
+        let pointerX = -1;
+        let pointerY = -1;
+        let hoveredBoxId = null;
+        let dwellStartTime = 0;
+        const DWELL_TIME_MS = 1000; 
+
+        // DOM Elements
+        const screenStart = document.getElementById('screen-start');
+        const screenGame = document.getElementById('screen-game');
+        const screenEnd = document.getElementById('screen-end');
+        const btnStart = document.getElementById('btn-start');
+        const btnRestart = document.getElementById('btn-restart');
+        const cameraStatus = document.getElementById('camera-status');
+        
+        const questionText = document.getElementById('question-text');
+        const scoreDisplay = document.getElementById('score-display');
+        const timerDisplay = document.getElementById('timer-display');
+        const qCountDisplay = document.getElementById('question-count');
+        const finalScoreDisplay = document.getElementById('final-score');
+        
+        const cursor = document.getElementById('cursor');
+        const cursorRing = document.getElementById('cursor-ring');
+        const boxes = [
+            document.getElementById('box-0'),
+            document.getElementById('box-1'),
+            document.getElementById('box-2'),
+            document.getElementById('box-3')
+        ];
+
+        /** QUESTION GENERATOR **/
+        const tempatNames = ['sa', 'puluh', 'ratus', 'ribu', 'puluh ribu', 'ratus ribu'];
+
+        function generateQuestion() {
+            // Determine type: 0 = Nilai Tempat, 1 = Nilai Digit
+            const qType = Math.random() > 0.5 ? 'tempat' : 'digit';
+            
+            // Generate a random number between 1,000 and 99,999
+            const numDigits = Math.floor(Math.random() * 3) + 4; // 4 to 5 digits
+            let numStr = "";
+            for(let i=0; i<numDigits; i++) {
+                numStr += (i===0) ? (Math.floor(Math.random()*9)+1).toString() : Math.floor(Math.random()*10).toString();
+            }
+            
+            // Format number with comma
+            const formattedNum = Number(numStr).toLocaleString('en-US');
+            
+            // Pick a random digit index to ask about
+            const targetIndex = Math.floor(Math.random() * numDigits);
+            const targetDigit = numStr[targetIndex];
+            
+            // Calculate answers
+            const power = numDigits - 1 - targetIndex;
+            const correctTempat = tempatNames[power];
+            const correctDigit = (Number(targetDigit) * Math.pow(10, power)).toString();
+
+            let questionString = "";
+            let correctAnswer = "";
+            let wrongAnswers = [];
+
+            if (qType === 'tempat') {
+                questionString = `Apakah nilai tempat bagi <span class="text-pink-600">${targetDigit}</span> dalam <span class="text-indigo-600">${formattedNum}</span>?`;
+                correctAnswer = correctTempat;
+                // Generate wrong tempat options
+                let availableTempat = [...tempatNames];
+                availableTempat.splice(availableTempat.indexOf(correctTempat), 1);
+                availableTempat.sort(() => 0.5 - Math.random());
+                wrongAnswers = availableTempat.slice(0, 3);
+            } else {
+                questionString = `Apakah nilai digit bagi <span class="text-pink-600">${targetDigit}</span> dalam <span class="text-indigo-600">${formattedNum}</span>?`;
+                // Format with commas if large
+                correctAnswer = Number(correctDigit).toLocaleString('en-US');
+                
+                // Generate wrong digit options
+                wrongAnswers = [];
+                const otherPowers = [0, 1, 2, 3, 4, 5].filter(p => p !== power);
+                otherPowers.sort(() => 0.5 - Math.random());
+                for(let i=0; i<3; i++) {
+                    let wrongVal = Number(targetDigit) * Math.pow(10, otherPowers[i]);
+                    // if target is 0, all wrong answers would be 0, fix by changing digit
+                    if (Number(targetDigit) === 0) {
+                         wrongVal = (Math.floor(Math.random()*9)+1) * Math.pow(10, otherPowers[i]);
+                    }
+                    wrongAnswers.push(wrongVal.toLocaleString('en-US'));
+                }
+            }
+
+            return {
+                text: questionString,
+                correct: correctAnswer,
+                wrong: wrongAnswers
+            };
+        }
+
+        function loadNextQuestion() {
+            if (currentQuestionIndex >= totalQuestions) {
+                endGame();
+                return;
+            }
+
+            gameState = 'playing';
+            currentQuestionIndex++;
+            qCountDisplay.innerText = currentQuestionIndex;
+            
+            const qData = generateQuestion();
+            questionText.innerHTML = qData.text;
+            currentAnswer = qData.correct;
+
+            // Prepare options
+            let options = [qData.correct, ...qData.wrong];
+            options.sort(() => 0.5 - Math.random()); // Shuffle
+
+            // Reset Boxes
+            boxes.forEach((box, i) => {
+                box.className = `mystery-box box-${['tl','tr','bl','br'][i]}`; // Reset classes
+                box.querySelector('.answer-text').innerText = options[i];
+                box.dataset.value = options[i];
+            });
+
+            // Reset Timer
+            timeRemaining = timePerQuestion;
+            timerDisplay.innerText = timeRemaining;
+            clearInterval(timerInterval);
+            timerInterval = setInterval(() => {
+                timeRemaining--;
+                timerDisplay.innerText = timeRemaining;
+                if (timeRemaining <= 0) {
+                    handleAnswer(null); // Time out
+                }
+            }, 1000);
+        }
+
+        function handleAnswer(selectedBox) {
+            gameState = 'transitioning'; // Prevent multiple clicks
+            clearInterval(timerInterval);
+
+            if (selectedBox) {
+                const isCorrect = selectedBox.dataset.value === currentAnswer;
+                if (isCorrect) {
+                    playSuccessSound();
+                    selectedBox.classList.add('opened');
+                    // Calculate Score
+                    const timeBonus = timeRemaining * 10;
+                    score += 100 + timeBonus;
+                    scoreDisplay.innerText = score;
+                } else {
+                    playErrorSound();
+                    selectedBox.classList.add('shake');
+                    selectedBox.classList.add('wrong-opened');
+                    
+                    // Reveal correct one
+                    boxes.forEach(b => {
+                        if(b.dataset.value === currentAnswer) b.classList.add('opened');
+                    });
+                }
+            } else {
+                // Timeout
+                playErrorSound();
+                boxes.forEach(b => {
+                    if(b.dataset.value === currentAnswer) b.classList.add('opened');
+                });
+            }
+
+            // Wait 2.5 seconds before next question
+            setTimeout(() => {
+                loadNextQuestion();
+            }, 2500);
+        }
+
+        function endGame() {
+            gameState = 'ended';
+            clearInterval(timerInterval);
+            screenGame.classList.add('hidden');
+            screenEnd.classList.remove('hidden');
+            finalScoreDisplay.innerText = score;
+            cursor.style.display = 'none'; // Hide cursor on end screen
+        }
+
+        function startGame() {
+            initAudio(); // Required on user interaction
+            score = 0;
+            currentQuestionIndex = 0;
+            scoreDisplay.innerText = score;
+            
+            // Show loading status if camera not ready
+            if (!cameraReady) {
+                btnStart.classList.add('hidden');
+                cameraStatus.classList.remove('hidden');
+                
+                // Initialize MediaPipe if not done yet
+                if(!handsInitialized) initMediaPipe();
+                
+                // Wait for camera to be ready via a small loop
+                const checkCam = setInterval(() => {
+                    if(cameraReady) {
+                        clearInterval(checkCam);
+                        transitionToGame();
+                    }
+                }, 500);
+            } else {
+                transitionToGame();
+            }
+        }
+
+        function transitionToGame() {
+            screenStart.classList.add('hidden');
+            screenEnd.classList.add('hidden');
+            screenGame.classList.remove('hidden');
+            cursor.style.display = 'block';
+            loadNextQuestion();
+        }
+
+
+        /** MEDIAPIPE & CAMERA INTEGRATION **/
+        const videoElement = document.getElementsByClassName('input_video')[0];
+        let cameraReady = false;
+        let handsInitialized = false;
+
+        function onResults(results) {
+            if (!cameraReady) cameraReady = true;
+
+            // Only process gestures during active gameplay
+            if (gameState !== 'playing') {
+                cursor.style.display = 'none';
+                return;
+            }
+
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                cursor.style.display = 'block';
+                const landmarks = results.multiHandLandmarks[0];
+                const indexFingerTip = landmarks[8]; // Landmark 8 is Index Finger Tip
+
+                // Map coordinates (Note: x is inverted because video is mirrored)
+                const x = (1 - indexFingerTip.x) * window.innerWidth;
+                const y = indexFingerTip.y * window.innerHeight;
+                
+                pointerX = x;
+                pointerY = y;
+
+                // Move visual cursor
+                cursor.style.left = `${x}px`;
+                cursor.style.top = `${y}px`;
+            } else {
+                // No hands detected
+                cursor.style.display = 'none';
+                pointerX = -1;
+                pointerY = -1;
+            }
+        }
+
+        function initMediaPipe() {
+            handsInitialized = true;
+            const hands = new Hands({locateFile: (file) => {
+                return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+            }});
+            
+            hands.setOptions({
+                maxNumHands: 1,
+                modelComplexity: 1,
+                minDetectionConfidence: 0.7,
+                minTrackingConfidence: 0.7
+            });
+            
+            hands.onResults(onResults);
+
+            const camera = new Camera(videoElement, {
+                onFrame: async () => {
+                    await hands.send({image: videoElement});
+                },
+                width: 640,
+                height: 480
+            });
+            
+            camera.start().catch(err => {
+                alert("Ralat memulakan kamera. Sila pastikan anda memberikan kebenaran kamera.");
+                console.error(err);
+            });
+        }
+
+
+        /** DWELL (HOVER) DETECTION LOOP **/
+        function checkIntersections() {
+            if (gameState === 'playing' && pointerX !== -1 && pointerY !== -1) {
+                let currentlyHoveringId = null;
+                let hoveredBoxElement = null;
+
+                // Check collision with bounding boxes
+                for (let i = 0; i < boxes.length; i++) {
+                    const rect = boxes[i].getBoundingClientRect();
+                    // Inflate hitbox slightly for easier interaction
+                    const padding = 20; 
+                    if (
+                        pointerX >= rect.left - padding &&
+                        pointerX <= rect.right + padding &&
+                        pointerY >= rect.top - padding &&
+                        pointerY <= rect.bottom + padding
+                    ) {
+                        currentlyHoveringId = boxes[i].id;
+                        hoveredBoxElement = boxes[i];
+                        break;
+                    }
+                }
+
+                if (currentlyHoveringId !== hoveredBoxId) {
+                    // Hover target changed
+                    hoveredBoxId = currentlyHoveringId;
+                    dwellStartTime = Date.now();
+                    
+                    if (hoveredBoxId) {
+                        playHoverSound();
+                        hoveredBoxElement.style.transform = 'scale(1.1)';
+                    }
+                    
+                    // Reset styling for others
+                    boxes.forEach(b => {
+                        if (b.id !== hoveredBoxId && !b.classList.contains('opened') && !b.classList.contains('wrong-opened')) {
+                            b.style.transform = 'scale(1)';
+                        }
+                    });
+                }
+
+                // Process Dwell
+                if (hoveredBoxId) {
+                    const elapsed = Date.now() - dwellStartTime;
+                    const progress = Math.min((elapsed / DWELL_TIME_MS) * 100, 100);
+                    
+                    // Update cursor ring UI
+                    cursorRing.style.background = `conic-gradient(#4ade80 ${progress}%, transparent 0)`;
+
+                    if (elapsed >= DWELL_TIME_MS) {
+                        // Dwell complete - trigger click
+                        playOpenSound();
+                        cursorRing.style.background = `conic-gradient(#4ade80 0%, transparent 0)`;
+                        const selectedBox = document.getElementById(hoveredBoxId);
+                        hoveredBoxId = null; // Reset
+                        selectedBox.style.transform = 'scale(1)';
+                        handleAnswer(selectedBox);
+                    }
+                } else {
+                    cursorRing.style.background = `conic-gradient(#4ade80 0%, transparent 0)`;
+                }
+            } else {
+                cursorRing.style.background = `conic-gradient(#4ade80 0%, transparent 0)`;
+            }
+
+            requestAnimationFrame(checkIntersections);
+        }
+
+        // Event Listeners
+        btnStart.addEventListener('click', startGame);
+        btnRestart.addEventListener('click', startGame);
+
+        // Start intersection loop
+        requestAnimationFrame(checkIntersections);
+
+    </script>
+</body>
+</html>
